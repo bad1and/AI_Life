@@ -97,6 +97,22 @@ class API:
         except:
             return False
 
+    def start_background_chat(self):
+        """Запустить фоновое общение агентов"""
+        try:
+            r = requests.post(f"{self.base_url}/chat/start-background")
+            return r.ok
+        except:
+            return False
+
+    def stop_background_chat(self):
+        """Остановить фоновое общение агентов"""
+        try:
+            r = requests.post(f"{self.base_url}/chat/stop-background")
+            return r.ok
+        except:
+            return False
+
 @st.cache_resource
 def get_api():
     return API()

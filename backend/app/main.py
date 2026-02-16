@@ -10,12 +10,15 @@ from .db.database import db
 from .agents.models import Agent
 from .llm.mistral import llm
 from .memory.store import memory_store
-from .logger import get_logger, log_request, log_response, log_error, main_logger
+from .logger import get_logger, log_request, log_response, log_error
 
-# Создаем логгер для этого модуля
+# Импортируем роутер чата
+from .api.chat import router as chat_router
+
 logger = get_logger(__name__)
 
-app = FastAPI()
+# 1. Создаем приложение
+app = FastAPI(title="Kiber Ryvok API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -24,6 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(chat_router)
 
 # Мидлварь для логирования всех запросов
 @app.middleware("http")

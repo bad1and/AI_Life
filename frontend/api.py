@@ -48,6 +48,54 @@ class API:
         except:
             return {"nodes": [], "edges": []}
 
+    def get_chat_messages(self, limit=50):
+        """Получить сообщения из общего чата"""
+        try:
+            r = requests.get(f"{self.base_url}/chat/messages", params={"limit": limit})
+            return r.json() if r.ok else {"messages": []}
+        except Exception as e:
+            st.error(f"Ошибка получения сообщений чата: {e}")
+            return {"messages": []}
+
+    def send_to_chat(self, agent_id, message):
+        """Агент отправляет сообщение в чат"""
+        try:
+            r = requests.post(
+                f"{self.base_url}/chat/send",
+                params={"agent_id": agent_id, "message": message}
+            )
+            if r.ok:
+                return r.json()
+            else:
+                st.error(f"Ошибка: {r.text}")
+                return None
+        except Exception as e:
+            st.error(f"Ошибка отправки: {e}")
+            return None
+
+    def user_send_to_chat(self, message, user_name="Пользователь"):
+        """Пользователь отправляет сообщение в чат"""
+        try:
+            r = requests.post(
+                f"{self.base_url}/chat/user",
+                params={"message": message, "user_name": user_name}
+            )
+            if r.ok:
+                return r.json()
+            else:
+                st.error(f"Ошибка: {r.text}")
+                return None
+        except Exception as e:
+            st.error(f"Ошибка отправки: {e}")
+            return None
+
+    def clear_chat(self):
+        """Очистить историю чата"""
+        try:
+            r = requests.post(f"{self.base_url}/chat/clear")
+            return r.ok
+        except:
+            return False
 
 @st.cache_resource
 def get_api():

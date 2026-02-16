@@ -4,7 +4,7 @@ import uuid
 import random
 import asyncio
 from typing import List, Optional
-
+from ..agents.personalities import get_personality_prompt
 from ..db.database import db
 from ..llm.mistral import llm
 from ..memory.store import memory_store
@@ -148,8 +148,22 @@ async def background_agent_conversation():
                     context += f"{msg['agent_name']}: {msg['message']}\n"
 
             # Генерируем сообщение от агента
-            prompt = f"{context}\nТы {speaker['name']}. Твой характер: {speaker['personality']}. "
-            prompt += "Напиши что-нибудь в общий чат - поделись мыслями, задай вопрос или прокомментируй происходящее. Будь естественным."
+            # Новый живой промпт
+            prompt = f"""Контекст чата:
+            {context}
+
+            Ты сейчас {speaker['name']} и находишься в общем чате с другими.
+
+            Что можно написать:
+            - Поделиться мыслями о погоде/времени
+            - Спросить как дела у других
+            - Рассказать что-то смешное
+            - Пожаловаться на что-то
+            - Предложить тему для разговора
+            - Или просто написать что-то спонтанное
+
+            Пиши как человек в мессенджере - коротко, живо, с эмоциями!"""
+
 
             reply = llm.generate(
                 agent_id=speaker['id'],
@@ -183,60 +197,50 @@ async def background_agent_conversation():
 
 
 async def process_new_message(trigger_message):
-    """Обработка нового сообщения - все агенты могут ответить"""
-
-    # Получаем всех агентов
+    """Обработка нового сообщения"""
     agents = db.fetch_all("SELECT * FROM agents")
 
-    # Исключаем отправителя (если это агент)
-    other_agents = []
-    for agent in agents:
-        if agent['id'] != trigger_message.get('agent_id'):
-            other_agents.append(agent)
+    other_agents = [a for a in agents if a['id'] != trigger_message.get('agent_id')]
 
     if not other_agents:
         return
 
-    # Формируем контекст из последних сообщений
+    # Контекст из последних сообщений
     context = ""
     if len(chat_messages) > 3:
-        context = "Предыдущие сообщения:\n"
-        for msg in chat_messages[-4:-1]:  # последние 3 перед текущим
+        context = "Недавние сообщения:\n"
+        for msg in chat_messages[-4:-1]:
             context += f"{msg['agent_name']}: {msg['message']}\n"
 
-    # Каждый агент решает, хочет ли он ответить
     for agent in other_agents:
-        # Разные факторы влияют на вероятность ответа:
-        # - Тип сообщения (на вопрос чаще отвечают)
-        # - Характер агента (экстраверты чаще)
-        # - Случайность
+        # Агент решает, отвечать ли
+        should_respond = random.random() < 0.5  # 50% шанс
 
-        base_probability = 0.4  # базовый шанс 40%
-
-        # Если в сообщении есть вопрос, повышаем шанс
+        # Если вопрос - выше шанс
         if "?" in trigger_message['message']:
-            base_probability += 0.3
+            should_respond = random.random() < 0.8
 
-        # Экстраверты чаще отвечают
-        if agent['personality'] in ["дружелюбный", "энергичный", "любопытный"]:
-            base_probability += 0.2
-        elif agent['personality'] in ["задумчивый", "спокойный"]:
-            base_probability -= 0.1
+        if should_respond:
+            await asyncio.sleep(random.uniform(1, 4))  # Пауза как у людей
 
-        # Случайное решение
-        if random.random() < base_probability:
-            # Небольшая задержка перед ответом
-            await asyncio.sleep(random.uniform(1.0, 3.0))
+            # Получаем персонализированный промпт
+            personality_prompt = get_personality_prompt(
+                agent['name'],
+                agent['personality']
+            )
 
-            # Формируем промпт для ответа
-            prompt = f"{context}"
-            prompt += f"Новое сообщение от {trigger_message['agent_name']}: '{trigger_message['message']}'\n\n"
-            prompt += f"Ты {agent['name']}. Твой характер: {agent['personality']}. Что ты ответишь?"
+            prompt = f"""{context}
+Новое сообщение от {trigger_message['agent_name']}: "{trigger_message['message']}"
+
+Ты сейчас читаешь это сообщение. Что ты ответишь?
+Пиши естественно, как в реальном чате.
+"""
 
             reply = llm.generate(
                 agent_id=agent['id'],
                 prompt=prompt,
-                system=f"Ты {agent['name']}. Отвечай естественно, как в реальном чате."
+                system=personality_prompt,
+                temperature=0.9
             )
 
             if reply and not reply.startswith("(Ошибка"):
@@ -247,19 +251,11 @@ async def process_new_message(trigger_message):
                     "agent_name": agent['name'],
                     "message": reply,
                     "timestamp": datetime.now().isoformat(),
-                    "type": "agent_message",
-                    "in_reply_to": trigger_message['id']
+                    "type": "agent_message"
                 }
 
                 chat_messages.append(reply_message)
-                logger.info(f"💬 {agent['name']} ответил: {reply[:50]}...")
-
-                # Сохраняем в память
-                memory_store.add(
-                    agent['id'],
-                    f"Я ответил {trigger_message['agent_name']} в чате: {reply}",
-                    "нейтрально"
-                )
+                logger.info(f"💬 {agent['name']}: {reply[:50]}...")
 
 
 # Запускаем фоновое общение при старте

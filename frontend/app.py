@@ -81,3 +81,4 @@ with tab4:
 if st.session_state.get('auto_refresh', True):
     time.sleep(refresh_rate)
     st.rerun()
+

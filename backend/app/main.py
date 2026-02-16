@@ -126,12 +126,21 @@ def send_message(agent_id: str, message: str):
 
     logger.info(f"🤖 Агент {agent['name']} обрабатывает сообщение...")
 
-    # Генерируем ответ
-    reply = llm.agent_response(agent['name'], agent['personality'], message)
+    # Генерируем ответ с передачей agent_id для истории
+    reply = llm.agent_response(
+        agent_id=agent_id,  # Теперь передаём ID
+        agent_name=agent['name'],
+        personality=agent['personality'],
+        message=message
+    )
     logger.info(f"📝 Ответ от Mistral: {reply}")
 
-    # Сохраняем в память
-    memory_store.add(agent_id, f"Сообщение: {message} -> Ответ: {reply}", "нейтрально")
+    # Сохраняем в векторную память (долговременную)
+    memory_store.add(
+        agent_id,
+        f"Разговор: Пользователь: {message} -> Я ответил: {reply}",
+        "нейтрально"
+    )
 
     # Меняем настроение
     new_mood = min(1.0, max(0.0, agent['mood'] + random.uniform(-0.1, 0.2)))
@@ -144,7 +153,32 @@ def send_message(agent_id: str, message: str):
         (str(uuid.uuid4()), f"{agent['name']}: {reply}", agent_id, "message", datetime.now())
     )
 
-    return {"reply": reply, "mood": new_mood}
+    return {
+        "reply": reply,
+        "mood": new_mood,
+        "emotion": "😊" if new_mood > 0.7 else "😐" if new_mood > 0.3 else "😢"
+    }
+
+
+@app.get("/agents/{agent_id}/history")
+def get_agent_history(agent_id: str):
+    """Получить историю разговора с агентом"""
+    if agent_id not in llm.conversation_history:
+        return {"history": []}
+
+    history = llm.conversation_history[agent_id]
+    return {
+        "agent_id": agent_id,
+        "history": history,
+        "count": len(history)
+    }
+
+
+@app.post("/agents/{agent_id}/history/clear")
+def clear_agent_history(agent_id: str):
+    """Очистить историю агента"""
+    llm.clear_history(agent_id)
+    return {"ok": True, "message": f"История агента {agent_id} очищена"}
 
 
 @app.post("/events")

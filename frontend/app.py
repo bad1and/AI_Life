@@ -1,5 +1,5 @@
 import streamlit as st
-import time
+
 
 from api import get_api
 from components.agent_card import agent_card

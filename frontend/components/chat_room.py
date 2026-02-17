@@ -107,10 +107,7 @@ def render_chat_room(api):
                 st.session_state.chat_input = ""
                 st.rerun()
 
-    # Автоматическое обновление (без перезагрузки страницы)
-    if auto_refresh:
-        time.sleep(3)  # Обновление каждые 3 секунды
-        st.rerun()
+
 
 
 def get_agent_icon(name: str) -> str:

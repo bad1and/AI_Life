@@ -54,7 +54,7 @@ class MistralClient:
                 model=self.model,
                 messages=messages,
                 temperature=temperature,  # Выше = креативнее
-                max_tokens=100,
+                max_tokens=500,
                 top_p=0.9  # Добавляем разнообразия
             )
 

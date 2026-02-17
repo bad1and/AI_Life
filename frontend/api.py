@@ -7,10 +7,12 @@ class API:
         self.base_url = base_url
 
     def get_agents(self):
+        """Получить всех агентов (без кэширования)"""
         try:
             r = requests.get(f"{self.base_url}/agents")
             return r.json() if r.ok else []
-        except:
+        except Exception as e:
+            st.error(f"Ошибка получения агентов: {e}")
             return []
 
     def create_agent(self, name, personality):
@@ -113,6 +115,21 @@ class API:
         except:
             return False
 
-@st.cache_resource
+    def delete_agent(self, agent_id: str):
+        """Удалить агента"""
+        try:
+            r = requests.delete(f"{self.base_url}/agents/{agent_id}")
+            if r.ok:
+                st.success(f"Агент удален")
+                return True  # Возвращаем True при успехе
+            else:
+                st.error(f"Ошибка удаления: {r.text}")
+                return False
+        except Exception as e:
+            st.error(f"Ошибка: {e}")
+            return False
+
+
 def get_api():
     return API()
+

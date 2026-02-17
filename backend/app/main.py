@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 import uuid
@@ -226,3 +226,40 @@ def get_graph():
         "nodes": [dict(a) for a in agents],
         "edges": []
     }
+
+
+@app.delete("/agents/{agent_id}")
+def delete_agent(agent_id: str):
+    """Удалить агента по ID"""
+    logger.info(f"🗑️ Запрос на удаление агента: {agent_id}")
+
+    # Проверяем существует ли агент
+    agent = db.fetch_one("SELECT * FROM agents WHERE id = ?", (agent_id,))
+    if not agent:
+        logger.warning(f"❌ Агент не найден: {agent_id}")
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    agent_name = agent['name']
+
+    # Удаляем агента из БД
+    db.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+
+    # Удаляем воспоминания агента
+    db.execute("DELETE FROM memories WHERE agent_id = ?", (agent_id,))
+
+    # Убираем удаление из relations - этой таблицы нет
+    # db.execute("DELETE FROM relations WHERE agent1_id = ? OR agent2_id = ?", (agent_id, agent_id))
+
+    # Добавляем событие в ленту
+    db.execute(
+        "INSERT INTO events (id, content, type, timestamp) VALUES (?, ?, ?, ?)",
+        (str(uuid.uuid4()), f"🗑️ Агент {agent_name} удален", "system", datetime.now())
+    )
+
+    logger.info(f"✅ Агент {agent_name} ({agent_id}) удален")
+
+    # Очищаем историю чата агента если есть
+    if hasattr(llm, 'conversation_history') and agent_id in llm.conversation_history:
+        del llm.conversation_history[agent_id]
+
+    return {"ok": True, "message": f"Agent {agent_name} deleted"}

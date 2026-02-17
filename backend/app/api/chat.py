@@ -1,25 +1,26 @@
-from fastapi import APIRouter, HTTPException
-from datetime import datetime
-import uuid
-import random
 import asyncio
-from typing import List, Optional
-from ..agents.personalities import get_personality_prompt
+import random
+import uuid
+from datetime import datetime
+
+from fastapi import APIRouter, HTTPException
+
 from ..db.database import db
 from ..llm.mistral import llm
-from ..memory.store import memory_store
 from ..logger import get_logger
-
+from ..memory.store import memory_store
+from ..agents.personalities import get_chat_response_prompt
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 # Хранилище сообщений
 chat_messages = []
-MAX_CHAT_HISTORY = 200  # Увеличим историю
+MAX_CHAT_HISTORY = 200
 
-# Флаг для фоновой активности агентов
+# Флаг для фоновой активности агентов - глобальная переменная
 background_task_running = False
+background_task = None
 
 
 @router.get("/messages")
@@ -101,22 +102,46 @@ async def clear_chat():
 @router.post("/start-background")
 async def start_background_chat():
     """Запустить фоновое общение агентов"""
-    global background_task_running
+    global background_task_running, background_task
+
     if not background_task_running:
         background_task_running = True
-        asyncio.create_task(background_agent_conversation())
+        # Создаем и сохраняем задачу
+        background_task = asyncio.create_task(background_agent_conversation())
         logger.info("🎮 Запущено фоновое общение агентов")
         return {"ok": True, "message": "Background chat started"}
+
     return {"ok": True, "message": "Already running"}
 
 
 @router.post("/stop-background")
 async def stop_background_chat():
     """Остановить фоновое общение агентов"""
-    global background_task_running
+    global background_task_running, background_task
+
     background_task_running = False
+
+    # Отменяем задачу если она существует
+    if background_task and not background_task.done():
+        background_task.cancel()
+        try:
+            await background_task
+        except asyncio.CancelledError:
+            pass
+
     logger.info("⏸️ Фоновое общение остановлено")
     return {"ok": True, "message": "Background chat stopped"}
+
+
+@router.get("/status")
+async def get_chat_status():
+    """Получить статус чата"""
+    global background_task_running
+    return {
+        "background_running": background_task_running,
+        "messages_count": len(chat_messages),
+        "agents_active": len(db.fetch_all("SELECT id FROM agents") or [])
+    }
 
 
 async def background_agent_conversation():
@@ -125,79 +150,74 @@ async def background_agent_conversation():
 
     logger.info("🔄 Запуск фонового общения агентов")
 
-    while background_task_running:
-        try:
-            # Ждем случайное время (от 10 до 30 секунд)
-            wait_time = random.uniform(10, 30)
-            await asyncio.sleep(wait_time)
+    try:
+        while background_task_running:
+            try:
+                # Ждем случайное время (от 10 до 30 секунд)
+                wait_time = random.uniform(10, 30)
+                await asyncio.sleep(wait_time)
 
-            # Получаем всех агентов
-            agents = db.fetch_all("SELECT * FROM agents")
-            if len(agents) < 2:
-                continue
+                # Получаем всех агентов
+                agents = db.fetch_all("SELECT * FROM agents")
+                if len(agents) < 2:
+                    continue
 
-            # Выбираем случайного агента для инициации разговора
-            speaker = random.choice(agents)
+                # Выбираем случайного агента для инициации разговора
+                speaker = random.choice(agents)
 
-            # Определяем тему разговора на основе последних сообщений
-            context = ""
-            if chat_messages:
-                recent = chat_messages[-5:]
-                context = "Недавние сообщения в чате:\n"
-                for msg in recent:
-                    context += f"{msg['agent_name']}: {msg['message']}\n"
+                # Определяем тему разговора на основе последних сообщений
+                context = ""
+                if chat_messages:
+                    recent = chat_messages[-5:]
+                    context = "Недавние сообщения в чате:\n"
+                    for msg in recent:
+                        context += f"{msg['agent_name']}: {msg['message']}\n"
 
-            # Генерируем сообщение от агента
-            # Новый живой промпт
-            prompt = f"""Контекст чата:
-            {context}
+                # Генерируем сообщение от агента
+                prompt = f"""Ты {speaker['name']} ({speaker['personality']}). 
+                Напиши что-нибудь в чат. Коротко (1-2 предложения).
+                Можно про нашу ИИ-жизнь или просто поболтать.
 
-            Ты сейчас {speaker['name']} и находишься в общем чате с другими.
+                Твое сообщение:"""
 
-            Что можно написать:
-            - Поделиться мыслями о погоде/времени
-            - Спросить как дела у других
-            - Рассказать что-то смешное
-            - Пожаловаться на что-то
-            - Предложить тему для разговора
-            - Или просто написать что-то спонтанное
+                reply = llm.generate(
+                    agent_id=speaker['id'],
+                    prompt=prompt,
+                    system=f"Ты {speaker['name']} и ты участвуешь в общем чате. Пиши как человек."
+                )
 
-            Пиши как человек в мессенджере - коротко, живо, с эмоциями!"""
+                if reply and not reply.startswith("(Ошибка"):
+                    # Отправляем сообщение в чат
+                    chat_message = {
+                        "id": str(uuid.uuid4()),
+                        "agent_id": speaker['id'],
+                        "agent_name": speaker['name'],
+                        "message": reply,
+                        "timestamp": datetime.now().isoformat(),
+                        "type": "agent_message",
+                        "initiative": "self"
+                    }
 
+                    chat_messages.append(chat_message)
+                    logger.info(f"💬 {speaker['name']} (сам): {reply[:50]}...")
 
-            reply = llm.generate(
-                agent_id=speaker['id'],
-                prompt=prompt,
-                system=f"Ты {speaker['name']} и ты участвуешь в общем чате. Пиши как человек."
-            )
+                    # Запускаем ответы на это сообщение
+                    asyncio.create_task(process_new_message(chat_message))
 
-            if reply and not reply.startswith("(Ошибка"):
-                # Отправляем сообщение в чат
-                chat_message = {
-                    "id": str(uuid.uuid4()),
-                    "agent_id": speaker['id'],
-                    "agent_name": speaker['name'],
-                    "message": reply,
-                    "timestamp": datetime.now().isoformat(),
-                    "type": "agent_message",
-                    "initiative": "self"  # пометка, что агент сам инициировал
-                }
-
-                chat_messages.append(chat_message)
-                logger.info(f"💬 {speaker['name']} (сам): {reply[:50]}...")
-
-                # Запускаем ответы на это сообщение
-                asyncio.create_task(process_new_message(chat_message))
-
-        except Exception as e:
-            logger.error(f"Ошибка в фоновом общении: {e}")
-            await asyncio.sleep(5)
-
-    logger.info("⏸️ Фоновое общение завершено")
+            except asyncio.CancelledError:
+                logger.info("⏸️ Фоновая задача отменена")
+                break
+            except Exception as e:
+                logger.error(f"Ошибка в фоновом общении: {e}")
+                await asyncio.sleep(5)
+    finally:
+        background_task_running = False
+        logger.info("⏸️ Фоновое общение завершено")
 
 
 async def process_new_message(trigger_message):
-    """Обработка нового сообщения"""
+    """Обработка нового сообщения - все агенты могут ответить"""
+
     agents = db.fetch_all("SELECT * FROM agents")
 
     other_agents = [a for a in agents if a['id'] != trigger_message.get('agent_id')]
@@ -205,61 +225,79 @@ async def process_new_message(trigger_message):
     if not other_agents:
         return
 
+
+
     # Контекст из последних сообщений
     context = ""
     if len(chat_messages) > 3:
-        context = "Недавние сообщения:\n"
+        context = "Недавние сообщения в чате:\n"
         for msg in chat_messages[-4:-1]:
             context += f"{msg['agent_name']}: {msg['message']}\n"
 
     for agent in other_agents:
-        # Агент решает, отвечать ли
-        should_respond = random.random() < 0.5  # 50% шанс
+        base_probability = 0.4
 
-        # Если вопрос - выше шанс
         if "?" in trigger_message['message']:
-            should_respond = random.random() < 0.8
+            base_probability += 0.3
 
-        if should_respond:
-            await asyncio.sleep(random.uniform(1, 4))  # Пауза как у людей
+        if agent['personality'] in ["дружелюбный", "энергичный", "любопытный"]:
+            base_probability += 0.2
+        elif agent['personality'] in ["задумчивый", "спокойный"]:
+            base_probability -= 0.1
 
-            # Получаем персонализированный промпт
-            personality_prompt = get_personality_prompt(
-                agent['name'],
-                agent['personality']
+        if random.random() < base_probability:
+            await asyncio.sleep(random.uniform(1.0, 3.0))
+
+            # Используем новый промпт с осознанием себя
+            from ..agents.personalities import get_chat_context_prompt
+
+            prompt = get_chat_response_prompt(
+                name=agent['name'],
+                personality_type=agent['personality'],
+                message=trigger_message['message'],
+                sender=trigger_message['agent_name']
             )
-
-            prompt = f"""{context}
-Новое сообщение от {trigger_message['agent_name']}: "{trigger_message['message']}"
-
-Ты сейчас читаешь это сообщение. Что ты ответишь?
-Пиши естественно, как в реальном чате.
-"""
 
             reply = llm.generate(
                 agent_id=agent['id'],
                 prompt=prompt,
-                system=personality_prompt,
+                system=f"Ты {agent['name']}, AI-модель в чате с другими AI.",
                 temperature=0.9
             )
 
             if reply and not reply.startswith("(Ошибка"):
-                # Отправляем ответ
                 reply_message = {
                     "id": str(uuid.uuid4()),
                     "agent_id": agent['id'],
                     "agent_name": agent['name'],
                     "message": reply,
                     "timestamp": datetime.now().isoformat(),
-                    "type": "agent_message"
+                    "type": "agent_message",
+                    "in_reply_to": trigger_message['id']
                 }
 
                 chat_messages.append(reply_message)
-                logger.info(f"💬 {agent['name']}: {reply[:50]}...")
+                logger.info(f"💬 {agent['name']} ответил: {reply[:50]}...")
 
+                memory_store.add(
+                    agent['id'],
+                    f"Я ответил {trigger_message['agent_name']} в чате: {reply}",
+                    "нейтрально"
+                )
+        if random.random() < base_probability:
+            await asyncio.sleep(random.uniform(1.0, 3.0))
 
-# Запускаем фоновое общение при старте
-@router.on_event("startup")
-async def startup_event():
-    """Запускаем фоновое общение при старте сервера"""
-    asyncio.create_task(start_background_chat())
+            # Новый короткий промпт
+            prompt = get_chat_response_prompt(
+                name=agent['name'],
+                personality_type=agent['personality'],
+                message=trigger_message['message'],
+                sender=trigger_message['agent_name']
+            )
+
+            reply = llm.generate(
+                agent_id=agent['id'],
+                prompt=prompt,
+                system=f"Ты {agent['name']}. Отвечай коротко.",
+                temperature=0.9  # Убрали max_tokens
+            )

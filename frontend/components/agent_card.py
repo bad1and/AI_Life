@@ -8,7 +8,6 @@ def agent_card(agent, api):
         col1, col2 = st.columns([1, 3])
 
         with col1:
-            # Эмодзи настроения
             if agent['mood'] > 0.7:
                 st.markdown("# 😊")
             elif agent['mood'] < 0.3:
@@ -23,40 +22,25 @@ def agent_card(agent, api):
             st.caption(f"😊 Настроение: {agent['mood']:.2f}")
 
         # Вкладки в карточке
-        tab1, tab2 = st.tabs(["💬 Чат", "📜 История"])
+        tab1, tab2, tab3 = st.tabs(["💬 Чат", "📜 История", "⚙️ Управление"])
 
         with tab1:
-            # Используем session_state для хранения ответа
-            reply_key = f"last_reply_{agent['id']}"
-
-            # Поле ввода
             msg = st.text_input("Сообщение", key=f"msg_{agent['id']}")
-
-            # Кнопка отправки
             if st.button("Отправить", key=f"btn_{agent['id']}"):
-                if msg:  # Проверяем что сообщение не пустое
+                if msg:
                     with st.spinner("🤔 Агент думает..."):
                         resp = api.send_message(agent['id'], msg)
                         if resp:
-                            # Сохраняем ответ в session_state
-                            st.session_state[reply_key] = {
-                                'text': resp.get('reply', ''),
-                                'time': time.time()
-                            }
-                            # НЕ ДЕЛАЕМ rerun() - просто обновляем состояние
-
-            # Показываем ответ если он есть
-            if reply_key in st.session_state:
-                reply = st.session_state[reply_key]
-                # Показываем ответ в красивом контейнере
-                with st.container():
-                    st.markdown("---")
-                    st.markdown("**🤖 Ответ:**")
-                    st.success(reply['text'])
-                    # Кнопка чтобы скрыть ответ
-                    if st.button("✖️ Скрыть", key=f"hide_{agent['id']}"):
-                        del st.session_state[reply_key]
-                        st.rerun()
+                            st.success(f"Ответ: {resp.get('reply', '')}")
 
         with tab2:
             render_chat_history(agent['id'], agent['name'], api)
+
+        with tab3:
+            st.markdown("**Опасная зона**")
+            if st.button(f"🗑️ Удалить {agent['name']}", key=f"delete_{agent['id']}"):
+                api.delete_agent(agent['id'])
+                st.success(f"{agent['name']} удален! Нажмите кнопку ниже для обновления.")
+
+            if st.button("🔄 Обновить список агентов", key=f"refresh_{agent['id']}"):
+                st.rerun()

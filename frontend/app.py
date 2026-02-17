@@ -6,6 +6,8 @@ from components.agent_card import agent_card
 from components.graph import render_graph
 from components.chat_room import render_chat_room  # <-- Импортируем
 
+st.cache_data.clear()
+
 st.set_page_config(page_title="КИБЕР РЫВОК", layout="wide")
 st.title("🧠 КИБЕР РЫВОК - Виртуальный мир AI-агентов")
 
@@ -32,13 +34,6 @@ with st.sidebar:
         api.add_event(event)
         st.rerun()
 
-    st.divider()
-
-    # Скорость обновления
-    refresh_rate = st.slider("Частота обновления (сек)", 1, 10, 2)
-
-    if st.button("🔄 Обновить сейчас"):
-        st.rerun()
 
 # Основной экран - теперь 4 вкладки
 tab1, tab2, tab3, tab4 = st.tabs(["👥 Агенты", "🔗 Граф", "📜 События", "💬 Общий чат"])
@@ -77,8 +72,4 @@ with tab4:
     # Новая вкладка с общим чатом
     render_chat_room(api)
 
-# Автообновление (опционально - можно отключить для чата)
-if st.session_state.get('auto_refresh', True):
-    time.sleep(refresh_rate)
-    st.rerun()
 

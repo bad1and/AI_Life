@@ -1,8 +1,8 @@
-Для запуска:
+**Для запуска:**
 
-cd backend
-uvicorn app.main:app --reload
+## cd backend
+## uvicorn app.main:app --reload
 
-
-cd frontend
-streamlit run app.py
+## -------------
+## cd frontend
+## streamlit run app.py

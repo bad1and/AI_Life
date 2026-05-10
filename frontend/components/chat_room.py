@@ -1,123 +1,139 @@
-import streamlit as st
-import time
 from datetime import datetime
-import random
+
+import streamlit as st
+
+try:
+    from streamlit_autorefresh import st_autorefresh
+except ImportError:
+    st_autorefresh = None
+
+
+AUTO_REFRESH_INTERVAL_MS = 3000
 
 
 def render_chat_room(api):
-    """Общая комната чата с автоматическим обновлением"""
+    """Общая комната чата с рабочим автообновлением."""
 
     st.markdown("## 💬 Общий чат агентов")
     st.caption("Агенты общаются сами по себе. Вы можете вмешаться в любой момент!")
 
-    # Панель управления сверху
+    status = api.get_chat_status()
+    running = bool(status.get("background_running", False))
+    agents_count = status.get("agents_active", 0)
+    messages_count = status.get("messages_count", 0)
+
     col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
 
     with col1:
-        st.markdown("**Управление:**")
+        state_icon = "🟢" if running else "⚪"
+        state_text = "запущен" if running else "остановлен"
+        st.markdown(f"**{state_icon} Чат {state_text}**")
+        st.caption(f"Агентов: {agents_count} · Сообщений: {messages_count}")
 
     with col2:
-        if st.button("▶️ Запустить", use_container_width=True):
-            api.start_background_chat()
-            st.success("Агенты начали общаться!")
-            time.sleep(0.5)
-            st.rerun()
+        if st.button("▶️ Запустить", disabled=running, use_container_width=True):
+            if api.start_background_chat():
+                st.rerun()
 
     with col3:
-        if st.button("⏸️ Стоп", use_container_width=True):
-            api.stop_background_chat()
-            st.info("Общение приостановлено")
-            time.sleep(0.5)
-            st.rerun()
+        if st.button("⏸️ Стоп", disabled=not running, use_container_width=True):
+            if api.stop_background_chat():
+                st.rerun()
 
     with col4:
         if st.button("🧹 Очистить", use_container_width=True):
-            api.clear_chat()
-            st.rerun()
+            if api.clear_chat():
+                st.rerun()
 
     with col5:
-        # Переключатель автообновления
         auto_refresh = st.checkbox("Автообновление", value=True)
 
-    # Контейнер для чата с фиксированной высотой
-    chat_container = st.container(height=500)  # Высота 500px
+    if auto_refresh:
+        if st_autorefresh is not None:
+            st_autorefresh(interval=AUTO_REFRESH_INTERVAL_MS, key="chat_autorefresh")
+        else:
+            st.warning(
+                "Автообновление требует пакет streamlit-autorefresh. "
+                "Установите зависимости из обновленного requirements.txt."
+            )
 
-    # Получаем сообщения
     try:
         response = api.get_chat_messages(limit=100)
-        messages = response.get('messages', [])
-    except:
+        messages = response.get("messages", [])
+    except Exception:
         messages = []
         st.error("Не удалось загрузить сообщения чата")
 
-    # Отображаем сообщения в контейнере
+    chat_container = st.container(height=500)
+
     with chat_container:
         if not messages:
             st.info("Чат пуст. Напишите что-нибудь или запустите общение агентов!")
         else:
             for msg in messages:
-                # Определяем тип сообщения
-                if msg['type'] == 'user_message':
-                    with st.chat_message("user"):
-                        st.markdown(f"**{msg['agent_name']}**")
-                        st.markdown(msg['message'])
-                        if msg.get('timestamp'):
-                            st.caption(f"🕐 {msg['timestamp'][11:19]}")
-                else:
-                    # Агент
-                    with st.chat_message("assistant"):
-                        # Иконка агента (разная для разных имен)
-                        icon = get_agent_icon(msg['agent_name'])
-                        st.markdown(f"**{icon} {msg['agent_name']}**")
-                        st.markdown(msg['message'])
+                render_chat_message(msg)
 
-                        # Показываем время и индикатор ответа
-                        cols = st.columns([1, 5])
-                        with cols[0]:
-                            if msg.get('timestamp'):
-                                st.caption(f"🕐 {msg['timestamp'][11:19]}")
-                        with cols[1]:
-                            if 'in_reply_to' in msg:
-                                st.caption("↪️ ответ")
-
-    # Поле ввода внизу (всегда видимо)
     st.markdown("---")
 
-    input_col, send_col = st.columns([5, 1])
-
-    with input_col:
-        # Используем уникальный ключ для поля ввода
-        if "chat_input" not in st.session_state:
-            st.session_state.chat_input = ""
-
-        user_message = st.text_input(
-            "Ваше сообщение",
-            key="chat_input_widget",
-            value=st.session_state.chat_input,
-            label_visibility="collapsed",
-            placeholder="Напишите сообщение в чат..."
-        )
-
-    with send_col:
-        if st.button("📤 Отправить", use_container_width=True):
-            if user_message:
-                with st.spinner("..."):
-                    api.user_send_to_chat(user_message, "Пользователь")
-                # Очищаем поле ввода
-                st.session_state.chat_input = ""
-                st.rerun()
+    user_message = st.chat_input("Напишите сообщение в чат...")
+    if user_message:
+        text = user_message.strip()
+        if text:
+            api.user_send_to_chat(text, "Пользователь")
+            st.rerun()
 
 
+def render_chat_message(msg):
+    """Отрисовать одно сообщение."""
+    msg_type = msg.get("type", "agent_message")
+    name = msg.get("agent_name", "Неизвестно")
+    text = msg.get("message", "")
+    timestamp = format_time(msg.get("timestamp"))
+
+    if msg_type == "user_message":
+        with st.chat_message("user"):
+            st.markdown(f"**{name}**")
+            st.markdown(text)
+            if timestamp:
+                st.caption(f"🕐 {timestamp}")
+        return
+
+    with st.chat_message("assistant"):
+        icon = get_agent_icon(name)
+        st.markdown(f"**{icon} {name}**")
+        st.markdown(text)
+
+        captions = []
+        if timestamp:
+            captions.append(f"🕐 {timestamp}")
+        if msg.get("in_reply_to"):
+            captions.append("↪️ ответ")
+        if msg.get("initiative") == "self":
+            captions.append("сам написал")
+
+        if captions:
+            st.caption(" · ".join(captions))
+
+
+def format_time(timestamp: str) -> str:
+    """Вернуть HH:MM:SS из ISO timestamp."""
+    if not timestamp:
+        return ""
+
+    try:
+        return datetime.fromisoformat(timestamp).strftime("%H:%M:%S")
+    except ValueError:
+        return timestamp[11:19] if len(timestamp) >= 19 else timestamp
 
 
 def get_agent_icon(name: str) -> str:
-    """Разные иконки для разных агентов"""
+    """Разные иконки для разных агентов."""
     icons = {
-        'Алиса': '👩‍💻',
-        'Боб': '👨‍💻',
-        'Чарли': '🧑‍🎨',
-        'Диана': '👩‍🎨',
-        'Федя': '🧑‍🔧',
-        'Степа': '👨‍🔧'
+        "Алиса": "👩‍💻",
+        "Боб": "👨‍💻",
+        "Чарли": "🧑‍🎨",
+        "Диана": "👩‍🎨",
+        "Федя": "🧑‍🔧",
+        "Степа": "👨‍🔧",
     }
-    return icons.get(name, '🤖')
+    return icons.get(name, "🤖")
